@@ -1,9 +1,4 @@
-# Fabric Example Mod
+# Fluid Interactions
+Lets you create custom cobblestone generators, changing based on flowing fluid and adjacent fluids and blocks.
 
-## Setup
-
-For setup instructions please see the [fabric wiki page](https://fabricmc.net/wiki/tutorial:setup) that relates to the IDE that you are using.
-
-## License
-
-This template is available under the CC0 license. Feel free to learn from it and incorporate it in your own projects.
+Uses weighed randomness to let you add variety (such as ores)
