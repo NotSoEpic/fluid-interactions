@@ -1,19 +1,25 @@
 package com.dindcrzy.fluid;
 
-import com.google.gson.*;
+import com.dindcrzy.fluid.criteria.*;
+import com.google.common.collect.ImmutableList;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import net.fabricmc.api.ModInitializer;
 import net.minecraft.block.Block;
-import net.minecraft.block.Blocks;
+import net.minecraft.block.BlockState;
 import net.minecraft.fluid.Fluid;
-import net.minecraft.fluid.Fluids;
+import net.minecraft.fluid.FluidState;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Direction;
 import net.minecraft.util.registry.Registry;
-import org.lwjgl.system.CallbackI;
+import net.minecraft.world.World;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 public class FluidInteractions implements ModInitializer {
@@ -22,36 +28,12 @@ public class FluidInteractions implements ModInitializer {
 	// That way, it's clear which mod wrote info, warnings, and errors.
 	public static final Logger LOGGER = LoggerFactory.getLogger("FluidInteractions");
 	
-	/*public static List<InteractionType> interactions = Arrays.asList(
-		new InteractionType(Fluids.LAVA, Fluids.WATER, null)
-			.add(Blocks.IRON_ORE, 10d)
-			.add(Blocks.GOLD_ORE, 5d)
-			.add(Blocks.DIAMOND_ORE, 1d),
-		new InteractionType(Fluids.LAVA, Fluids.WATER, Blocks.DEEPSLATE)
-			.add(Blocks.DEEPSLATE_IRON_ORE, 10d)
-			.add(Blocks.DEEPSLATE_GOLD_ORE, 5d)
-			.add(Blocks.DEEPSLATE_DIAMOND_ORE, 1d),
-		new InteractionType(Fluids.LAVA, Blocks.SOUL_SOIL, Blocks.BLUE_ICE)
-			.add(Blocks.BASALT, 5d)
-			.add(Blocks.BLACKSTONE, 4d)
-			.add(Blocks.GILDED_BLACKSTONE, 1d),
-		new InteractionType(Fluids.WATER, Blocks.BLUE_ICE, Blocks.BLUE_ICE)
-			.add(Blocks.ICE, 1d)
-			.setSilent(true)
-	);*/
-	
-	// this is 1000% a terrible practice
-	public static final List<InteractionType> interactions = generateConstants();
+	// TODO: this feels wrong
+	public static List<InteractionType> interactions = generateInteractions();
 
 	@Override
 	public void onInitialize() {
-		// This code runs as soon as Minecraft is in a mod-load-ready state.
-		// However, some things (like resources) may still be uninitialized.
-		// Proceed with mild caution.
-
-		LOGGER.info("Hello Fabric world!");
 		
-		//generateConstants();
 	}
 	
 	public static Fluid getFluid(String id) {
@@ -79,60 +61,148 @@ public class FluidInteractions implements ModInitializer {
 		return 0;
 	}
 	
-	private static List<InteractionType> generateConstants() {
+	private static List<InteractionType> generateInteractions() {
 		List<InteractionType> interactionTypes = new ArrayList<>();
-		String rawJson = ShittyCustomConfig.of("fluid_interactions", cfg_fallback);
+		String rawJson = CustomConfig.of("fluid_interactions", cfg_fallback);
 		JsonObject interactionJson = JsonParser.parseString(rawJson).getAsJsonObject();
-		JsonArray interactions = interactionJson.getAsJsonArray("interactions");
-		for (JsonElement _interaction : interactions) {
-			JsonObject interaction = _interaction.getAsJsonObject();
-			Fluid flowing = getFluid(tryString(interaction, "flowing"));
-			Fluid adjacent_fluid = getFluid(tryString(interaction, "adjacent_fluid"));
-			Block adjacent_block = getBlock(tryString(interaction, "adjacent_block"));
-			Block catalyst = getBlock(tryString(interaction, "catalyst"));
-			InteractionType interactionType;
-			if (interaction.has("adjacent_fluid")) {
-				interactionType = new InteractionType(flowing, adjacent_fluid, catalyst);
-			} else if (interaction.has("adjacent_block")) {
-				interactionType = new InteractionType(flowing, adjacent_block, catalyst);
-			} else {
-				LOGGER.warn("No adjacent block or adjacent fluid specified");
-				break;
-			}
-			for (JsonElement _result : interaction.getAsJsonArray("results")) {
-				JsonObject result = _result.getAsJsonObject();
-				Block result_block = getBlock(result.get("block").getAsString());
-				double weight = tryDouble(result, "weight");
-				if (weight > 0) {
-					interactionType.add(result_block, weight);
-				} else {
-					LOGGER.warn("invalid weight");
+		JsonArray jo_interactions = CustomConfig.getJA(interactionJson, "interactions");
+		if (jo_interactions != null) {
+			for(JsonElement je_interaction : jo_interactions) {
+				JsonObject interaction = CustomConfig.toJO(je_interaction);
+				if (interaction != null) {
+					Double priority = CustomConfig.getD(interaction, "priority");
+					InteractionType itype = new InteractionType(priority == null ? 0d : priority);
+					
+					// RESULTS
+					JsonArray results = CustomConfig.getJA(interaction, "results");
+					if (results != null) {
+						for (JsonElement je_result : results) {
+							JsonObject result = CustomConfig.toJO(je_result);
+							if (result != null) {
+								String block = CustomConfig.getS(result, "block");
+								Double weight = CustomConfig.getD(result, "weight");
+								if (block != null && weight != null) {
+									itype.addResult(block, weight);
+								}
+							}
+						}
+					}
+
+					// misc
+					itype.setSilent(Boolean.TRUE.equals(CustomConfig.getB(interaction, "silent")));
+					
+					// CRITERIA
+					// flowing fluid (lava of skyblock setup)
+					itype.addCriteria(FlowCriteria.readFrom(interaction));
+					// adjacent fluid (water of skyblock setup)
+					itype.addCriteria(AFluidCriteria.readFrom(interaction));
+					// adjacent block (blue ice of basalt generator)
+					itype.addCriteria(ABlockCriteria.readFrom(interaction));
+					// catalyst (soul soil of basalt generator)
+					itype.addCriteria(CatalystCriteria.readFrom(interaction));
+					// height
+					itype.addCriteria(HeightCriteria.readFrom(interaction));
+					// biome
+					itype.addCriteria(BiomeCriteria.readFrom(interaction));
+					// temperature
+					itype.addCriteria(TemperatureCriteria.readFrom(interaction));
+					// dimensions
+					itype.addCriteria(DimensionCriteria.readFrom(interaction));
+					
+					LOGGER.info(itype.toString());
+					
+					interactionTypes.add(itype);
 				}
 			}
-			interactionTypes.add(interactionType);
 		}
+		
 		return interactionTypes;
+	}
+	
+	private static final ImmutableList<Direction> FLOW_DIRECTIONS =
+			ImmutableList.of(Direction.DOWN, Direction.SOUTH, Direction.NORTH, Direction.EAST, Direction.WEST);
+	
+	// returns success in replacing behaviour
+	public static boolean flowInteract(World world, BlockPos pos, FluidState flow) {
+		InteractionType queued = null;
+		for (Direction dir : FLOW_DIRECTIONS) { // down and horizontal
+			BlockPos blockPos = pos.offset(dir.getOpposite());
+			FluidState a_fluid = world.getFluidState(blockPos);
+			BlockState a_block = world.getBlockState(blockPos);
+			for (InteractionType interaction : FluidInteractions.interactions) {
+				if (interaction.test(flow, a_fluid, a_block, pos, world, dir.getOpposite())) {
+					// an interaction hasn't been detected yet
+					if (queued == null) {
+						LOGGER.info(interaction.toString());
+						queued = interaction;
+					} // an interaction with a higher priority than the previously detected one
+					else if (queued.priority < interaction.priority) {
+						queued = interaction;
+					}
+				}
+			}
+		}
+		if (queued != null) {
+			BlockState block = queued.getResult(world.random);
+			if (block != null) {
+				world.setBlockState(pos, block);
+				if (!queued.silent) {
+					// playExtinguishSound()
+					world.syncWorldEvent(1501, pos, 0);
+				}
+				return true;
+			}
+		}
+		return false;
 	}
 	
 	private static final String cfg_fallback = """
 			{
 			  "interactions": [
 			    {
+			      "priority": 0,
 			      "flowing": "minecraft:lava",
 			      "adjacent_fluid": "minecraft:water",
-			      "catalyst": "minecraft:deepslate",
 			      "results": [
 			        {
+			          "block": "minecraft:cobblestone",
+			          "weight": 15
+			        },
+			        {
+			          "block": "minecraft:coal_ore",
+			          "weight": 7
+			        },
+			        {
+			          "block": "minecraft:iron_ore",
+			          "weight": 3
+			        },
+			        {
+			          "block": "minecraft:lapis_ore",
+			          "weight": 2
+			        }
+			      ]
+			    },
+			    {
+			      "priority": 2,
+			      "flowing": "minecraft:lava",
+			      "adjacent_fluid": "minecraft:water",
+			      "max_y": 0,
+			      "results": [
+			        {
+			          "block": "minecraft:cobbled_deepslate",
+			          "weight": 15
+			        },
+			        {
 			          "block": "minecraft:deepslate_iron_ore",
-			          "weight": 14
+			          "weight": 7
 			        },
 			        {
 			          "block": "minecraft:deepslate_gold_ore",
-			          "weight": 5
+			          "weight": 3
 			        },
 			        {
 			          "block": "minecraft:deepslate_redstone_ore",
-			          "weight": 10
+			          "weight": 5
 			        },
 			        {
 			          "block": "minecraft:deepslate_diamond_ore",
@@ -157,7 +227,48 @@ public class FluidInteractions implements ModInitializer {
 			          "block": "minecraft:gilded_blackstone",
 			          "weight": 1
 			        }
-			      ]
+			      ],
+			      "dimensions": {
+			        "blacklist": false,
+			        "dimensions": [
+			          "minecraft:the_nether"
+			        ]
+			      }
+			    },
+			    {
+			      "priority": 1,
+			      "flowing": "minecraft:lava",
+			      "adjacent_fluid": "minecraft:water",
+			      "results": [
+			        {
+			          "block": "minecraft:sandstone",
+			          "weight": 1
+			        }
+			      ],
+			      "biomes": {
+			        "blacklist": false,
+			        "biomes": [
+			          "minecraft:beach",
+			          "minecraft:snowy_beach",
+			          "minecraft:desert"
+			        ]
+			      }
+			    },
+			    {
+			      "flowing": "create:honey",
+			      "adjacent_fluid": "create:chocolate",
+			      "min_temp": 0.5,
+			      "results": [
+			        {
+			          "block": "create:andesite_casing",
+			          "weight": 4
+			        },
+			        {
+			          "block": "create:brass_casing",
+			          "weight": 1
+			        }
+			      ],
+			      "silent": true
 			    }
 			  ]
 			}""";

@@ -1,62 +1,35 @@
 package com.dindcrzy.fluid;
 
-import net.minecraft.block.Block;
+import com.dindcrzy.fluid.criteria.*;
 import net.minecraft.block.BlockState;
-import net.minecraft.fluid.Fluid;
-import org.jetbrains.annotations.Nullable;
+import net.minecraft.fluid.FluidState;
+import net.minecraft.util.Identifier;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Direction;
+import net.minecraft.util.registry.Registry;
+import net.minecraft.world.World;
 
-import java.util.NavigableMap;
-import java.util.Random;
-import java.util.TreeMap;
+import java.util.*;
 
 public class InteractionType {
-    private final NavigableMap<Double, BlockState> weights = new TreeMap<>();
+    private final NavigableMap<Double, String> resultWeights = new TreeMap<>();
     private double total = 0;
     
-    public final Fluid flow;
-    public final Fluid adjacent_fluid;
-    public final Block adjacent_block;
-    public final Block catalyst;
+    public final double priority;
+    
+    public final List<InteractionCriteria> criteria = new ArrayList<>();
     
     public boolean silent = false;
     
-    InteractionType(Fluid flow, Fluid adjacent, @Nullable Block catalyst) {
-        this.flow = flow;
-        this.adjacent_fluid = adjacent;
-        this.adjacent_block = null;
-        this.catalyst = catalyst;
+    InteractionType(double priority) {
+        this.priority = priority; // required?
     }
-
-    InteractionType(Fluid flow, Block adjacent, @Nullable Block catalyst) {
-        this.flow = flow;
-        this.adjacent_fluid = null;
-        this.adjacent_block = adjacent;
-        this.catalyst = catalyst;
-    }
-
-    public boolean test(Fluid flow, Fluid adjacent_fluid, Block adjacent_block, @Nullable Block catalyst) {
-        return flow.matchesType(this.flow) &&
-                (adjacent_fluid.matchesType(this.adjacent_fluid) ||  adjacent_block == this.adjacent_block) &&
-                (this.catalyst == null || this.catalyst == catalyst);
-    }
-    
-    public boolean test(Fluid flow, Fluid adjacent_fluid, @Nullable Block catalyst) {
-        return test(flow, adjacent_fluid, null, catalyst);
-    }
-    
-    public boolean test(Fluid flow, Block adjacent_block, @Nullable Block catalyst) {
-        return test(flow, null, adjacent_block, catalyst);
-    }
-    
-    public InteractionType add(BlockState block, Double weight) {
-        if (weight <= 0) return this; // add(b, 0) messes with stuff
-        total += weight;
-        weights.put(total, block);
-        return this;
-    }
-    
-    public InteractionType add(Block block, Double weight) {
-        return add(block.getDefaultState(), weight);
+    InteractionType(double priority, String flow, String a_fluid, String a_block, String catalyst) {
+        this(priority);
+        addCriteria(new FlowCriteria(flow));
+        if (a_fluid != null) {addCriteria(new AFluidCriteria(a_fluid));}
+        if (a_block != null) {addCriteria(new ABlockCriteria(a_block));}
+        if (catalyst != null) {addCriteria(new CatalystCriteria(catalyst));}
     }
 
     public InteractionType setSilent(boolean b) {
@@ -64,19 +37,44 @@ public class InteractionType {
         return this;
     }
     
-    public BlockState next(Random random) {
-        double value = random.nextDouble() * total;
-        return weights.higherEntry(value).getValue();
+    public InteractionType addCriteria(InteractionCriteria criterion) {
+        if (criterion != null) {
+            this.criteria.add(criterion);
+        }
+        return this;
+    }
+    
+    public InteractionType addResult(String block, Double weight) {
+        if (weight <= 0) return this; // add(b, 0) messes with stuff
+        total += weight;
+        resultWeights.put(total, block);
+        return this;
+    }
+    public BlockState getResult(Random random) {
+        if (total > 0) {
+            double value = random.nextDouble() * total;
+            String id = resultWeights.higherEntry(value).getValue();
+            return Registry.BLOCK.get(Identifier.tryParse(id)).getDefaultState();
+        }
+        return null;
+    }
+
+    public boolean test(FluidState flow, FluidState a_fluid, BlockState a_block, BlockPos pos, World world, Direction dir) {
+        for(InteractionCriteria criterion : criteria) {
+            if (!criterion.test(flow, a_fluid, a_block, pos, world, dir)) {
+                return false;
+            }
+        }
+        return !criteria.isEmpty();
     }
 
     @Override
     public String toString() {
         return "InteractionType{" +
+                "resultWeights=" + resultWeights +
                 ", total=" + total +
-                ", flow=" + flow +
-                ", adjacent_fluid=" + adjacent_fluid +
-                ", adjacent_block=" + adjacent_block +
-                ", catalyst=" + catalyst +
+                ", priority=" + priority +
+                ", criteria=" + criteria +
                 ", silent=" + silent +
                 '}';
     }
